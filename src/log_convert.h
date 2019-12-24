@@ -8,7 +8,7 @@
 #ifndef LOG_CONVERT_H_
 #define LOG_CONVERT_H_
 
-#define ETHERTYPE_IP 0x0800   //IP Protocal
+#define ETHERTYPE_IP 0x0800   //IP Protocol
 
 #define FALSE 0
 #define TRUE 1
