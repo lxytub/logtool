@@ -167,6 +167,7 @@ typedef struct UDPHeader {
 
 enum luaMsgType
 {
+  LUA_MSG_TYPE_PDCP_TO_RLC       = 0x16,
 	LUA_MSG_TYPE_PHY_DL_CONFIG_REQ = 0x41,
 	LUA_MSG_TYPE_PHY_UL_DCI_REQ    = 0x43,
 	LUA_MSG_TYPE_PHY_UL_CONFIG_REQ = 0x44,
@@ -178,6 +179,9 @@ enum luaMsgType
 
 #pragma pack( pop)
 
-u_char writeFile(FILE* pFile, char *pBuffer, u_int size, int iIndex);
+u_char writeFile(FILE* pFile, char *pBuffer, u_int size, long long iIndex);
+void updLengthField(s_pkt_header *pPktHeader, s_ip_header * pIpHeader,
+                    s_udp_header * pUdpHeader, void *pMsgHeader,
+                    u_int linkHdrLen, u_char msgType);
 
 #endif /* LOG_CONVERT_H_ */

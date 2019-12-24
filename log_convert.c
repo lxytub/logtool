@@ -27,7 +27,8 @@ int main(int argc, char **argv) {
 	unsigned char buffer[2048] = {0};
 	unsigned char *pBuf = buffer;
 	//u_int rnti;
-	int len, iIndex, iPktLength;
+	long long iIndex;
+	int len, iPktLength;
 	int lenToWrite;
 	s_pkt_header *pPktHeader;
 	unsigned char * pPktPayload;
@@ -93,14 +94,20 @@ int main(int argc, char **argv) {
 	}
 
 	// 获取文件大小，最大2G
-	fseek(pInputFile, 0, SEEK_END);
-	long iFileLen = ftell(pInputFile);
-	fseek(pInputFile, 0, SEEK_SET);
+//	fseek(pInputFile, 0, SEEK_END);
+//	long iFileLen = ftell(pInputFile);
+//	fseek(pInputFile, 0, SEEK_SET);
+//
+  _fseeki64(pInputFile, 0, SEEK_END);
+  long long iFileLen = _ftelli64(pInputFile);
+  _fseeki64(pInputFile, 0, SEEK_SET);
+
+  //printf("file size: %I64d\n", iFileLen);
 
 	// pcap文件头是24 bytes
 	if (iFileLen < MIN_FILE_SIZE)
 	{
-		printf("Invalid file size: %ld\n", iFileLen);
+		printf("Invalid file size: %I64d\n", iFileLen);
 		fclose( pInputFile);
 		return EXIT_SUCCESS;
 	}
@@ -166,7 +173,7 @@ int main(int argc, char **argv) {
 		len = fread(pBuf, sizeof(char), sizeof(s_pkt_header), pInputFile);
 		if (len != sizeof(s_pkt_header))
 		{
-			printf("Failed to read package header, iIndex=%d, len=%d\n", iIndex, len);
+			printf("Failed to read package header, iIndex=%I64d, len=%d\n", iIndex, len);
 			RETURN_ON_FAILURE(pInputFile, pOutputFile);
 		}
 		pPktHeader = (s_pkt_header *)pBuf;
@@ -180,8 +187,8 @@ int main(int argc, char **argv) {
 		len = fread(pBuf, sizeof(char), iPktLength, pInputFile);
 		if (len != iPktLength)
 		{
-			printf("Failed to read package payload, iFileLen=%ld, iIndex=%d, iPktLength=%d, len=%d\n",
-					iFileLen, iIndex, iPktLength, len);
+			printf("Failed to read package payload, iFileLen=%I64d, iIndex=%I64d, iPktLength=%d, len=%d\n",
+					   iFileLen, iIndex, iPktLength, len);
 			if ((iIndex + iPktLength) > iFileLen)
 			{
 				printf("Current packet is corrupt, previous packets have been saved to %s.\n", argv[2]);
@@ -233,15 +240,6 @@ int main(int argc, char **argv) {
 								{
 									RETURN_ON_FAILURE(pInputFile, pOutputFile);
 								}
-
-								/*
-								len = fwrite((char *)pPktHeader, sizeof(char), sizeof(s_pkt_header) + iPktLength, pOutputFile);
-								if (len != (sizeof(s_pkt_header) + iPktLength))
-								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-									RETURN_ON_FAILURE(pInputFile, pOutputFile);
-								}
-								*/
 							}
 							else
 							{
@@ -249,27 +247,22 @@ int main(int argc, char **argv) {
 								{
 									pUciPdu = pUciIndHeader->sULUCIPDUDataStruct + i;
 
+									// update the length field
+									updLengthField(pPktHeader, pIpHeader, pUdpHeader, pUciIndHeader, linkHdrLen, luaMsgType);
+
 									// write packet header
 									lenToWrite = TOTAL_HEADER_LENGTH + MSG_UCI_IND_HEADER_LENGTH;
 
-									// update the length field
-									pPktHeader->iLength = LINK_IP_UDP_LUA_LENGTH + MSG_UCI_IND_TOTAL_LENGTH;
-									pPktHeader->iPLength = pPktHeader->iLength;
-									pIpHeader->ip_len = htons(pPktHeader->iLength - LINK_HEADER_LENGTH);
-									pUdpHeader->Length = htons(ntohs(pIpHeader->ip_len) - IP_HEADER_LENGTH);
-									pUciIndHeader->sMsgHdr.nMessageLen = MSG_UCI_IND_TOTAL_LENGTH;
-									pUciIndHeader->nUCI = 1;
-
-									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
+									// write header
+									if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, lenToWrite, iIndex))
 									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
 										RETURN_ON_FAILURE(pInputFile, pOutputFile);
 									}
 
-									lenToWrite = sizeof(ULUCIPDUDataStruct);
-									if (fwrite((char *)pUciPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
+									// write payload
+									lenToWrite = MSG_UCI_IND_PAYLOAD_LENGTH;
+									if (FALSE == writeFile(pOutputFile, (char *)pUciPdu, lenToWrite, iIndex))
 									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
 										RETURN_ON_FAILURE(pInputFile, pOutputFile);
 									}
 								}
@@ -281,13 +274,11 @@ int main(int argc, char **argv) {
 
 							if (crcCount < 2)
 							{
-								// write packet
-								len = fwrite((char *)pPktHeader, sizeof(char), PKT_HEADER_LENGTH + iPktLength, pOutputFile);
-								if (len != (PKT_HEADER_LENGTH + iPktLength))
-								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-									RETURN_ON_FAILURE(pInputFile, pOutputFile);
-								}
+                // write packet
+                if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, (sizeof(s_pkt_header) + iPktLength), iIndex))
+                {
+                  RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                }
 							}
 							else
 							{
@@ -295,29 +286,22 @@ int main(int argc, char **argv) {
 								{
 									pCrcPdu = pCrcIndHeader->sULCRCStruct + i;
 
+                  // update the length field
+                  updLengthField(pPktHeader, pIpHeader, pUdpHeader, pCrcIndHeader, linkHdrLen, luaMsgType);
+
 									// write packet header
 									lenToWrite = TOTAL_HEADER_LENGTH + MSG_CRC_IND_HEADER_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 
-									// update the length field
-									pPktHeader->iLength = LINK_IP_UDP_LUA_LENGTH + MSG_CRC_IND_TOTAL_LENGTH;
-									pPktHeader->iPLength = pPktHeader->iLength;
-									pIpHeader->ip_len = htons(pPktHeader->iLength - LINK_HEADER_LENGTH);
-									pUdpHeader->Length = htons(ntohs(pIpHeader->ip_len) - IP_HEADER_LENGTH);
-									pCrcIndHeader->sMsgHdr.nMessageLen = MSG_CRC_IND_TOTAL_LENGTH;
-									pCrcIndHeader->nCrc = 1;
-
-									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
-
-									lenToWrite = MSG_CRC_IND_PAYLOAD_LENGTH;
-									if (fwrite((char *)pCrcPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
+                  // write payload
+                  lenToWrite = MSG_CRC_IND_PAYLOAD_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pCrcPdu, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 								}
 							}
 							break;
@@ -328,12 +312,10 @@ int main(int argc, char **argv) {
 							if (ulschCount < 2)
 							{
 								// write packet
-								len = fwrite((char *)pPktHeader, sizeof(char), PKT_HEADER_LENGTH + iPktLength, pOutputFile);
-								if (len != (PKT_HEADER_LENGTH + iPktLength))
-								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-									RETURN_ON_FAILURE(pInputFile, pOutputFile);
-								}
+                if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, (sizeof(s_pkt_header) + iPktLength), iIndex))
+                {
+                  RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                }
 							}
 							else
 							{
@@ -341,29 +323,22 @@ int main(int argc, char **argv) {
 								{
 									pUlschPdu = (ULSCHPDUDataStruct *)((char *)pUlschIndHeader + MSG_ULSCH_IND_HEADER_LENGTH + i*MSG_ULSCH_IND_PAYLOAD_LENGTH);
 
-									// write packet header
-									lenToWrite = TOTAL_HEADER_LENGTH + MSG_ULSCH_IND_HEADER_LENGTH;
+                  // update the length field
+                  updLengthField(pPktHeader, pIpHeader, pUdpHeader, pUlschIndHeader, linkHdrLen, luaMsgType);
 
-									// update the length field
-									pPktHeader->iLength = LINK_IP_UDP_LUA_LENGTH + MSG_ULSCH_IND_TOTAL_LENGTH;
-									pPktHeader->iPLength = pPktHeader->iLength;
-									pIpHeader->ip_len = htons(pPktHeader->iLength - LINK_HEADER_LENGTH);
-									pUdpHeader->Length = htons(ntohs(pIpHeader->ip_len) - IP_HEADER_LENGTH);
-									pUlschIndHeader->sMsgHdr.nMessageLen = MSG_ULSCH_IND_TOTAL_LENGTH;
-									pUlschIndHeader->nUlsch = 1;
+                  // write packet header
+                  lenToWrite = TOTAL_HEADER_LENGTH + MSG_ULSCH_IND_HEADER_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 
-									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
-
-									lenToWrite = MSG_ULSCH_IND_PAYLOAD_LENGTH;
-									if (fwrite((char *)pUlschPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
+                  // write payload
+                  lenToWrite = MSG_ULSCH_IND_PAYLOAD_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pUlschPdu, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 								}
 							}
 							break;
@@ -373,13 +348,11 @@ int main(int argc, char **argv) {
 
 							if (pidCount < 2)
 							{
-								// write packet
-								len = fwrite((char *)pPktHeader, sizeof(char), PKT_HEADER_LENGTH + iPktLength, pOutputFile);
-								if (len != (PKT_HEADER_LENGTH + iPktLength))
-								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-									RETURN_ON_FAILURE(pInputFile, pOutputFile);
-								}
+                // write packet
+                if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, (sizeof(s_pkt_header) + iPktLength), iIndex))
+                {
+                  RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                }
 							}
 							else
 							{
@@ -387,29 +360,22 @@ int main(int argc, char **argv) {
 								{
 									pRachPdu = pRachIndHeader->sPreambleStruct + i;
 
-									// write packet header
-									lenToWrite = TOTAL_HEADER_LENGTH + MSG_RACH_IND_HEADER_LENGTH;
+                  // update the length field
+                  updLengthField(pPktHeader, pIpHeader, pUdpHeader, pRachIndHeader, linkHdrLen, luaMsgType);
 
-									// update the length field
-									pPktHeader->iLength = LINK_IP_UDP_LUA_LENGTH + MSG_RACH_IND_TOTAL_LENGTH;
-									pPktHeader->iPLength = pPktHeader->iLength;
-									pIpHeader->ip_len = htons(pPktHeader->iLength - LINK_HEADER_LENGTH);
-									pUdpHeader->Length = htons(ntohs(pIpHeader->ip_len) - IP_HEADER_LENGTH);
-									pRachIndHeader->sMsgHdr.nMessageLen = MSG_RACH_IND_TOTAL_LENGTH;
-									pRachIndHeader->nNrOfPreamb = 1;
+                  // write packet header
+                  lenToWrite = TOTAL_HEADER_LENGTH + MSG_RACH_IND_HEADER_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 
-									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
-
-									lenToWrite = MSG_RACH_IND_PAYLOAD_LENGTH;
-									if (fwrite((char *)pRachPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
+                  // write payload
+                  lenToWrite = MSG_RACH_IND_PAYLOAD_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pRachPdu, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 								}
 							}
 							break;
@@ -432,11 +398,10 @@ int main(int argc, char **argv) {
 								pDlConfigHeader->sMsgHdr.nMessageLen = MSG_DL_CONFIG_REQ_HEADER_LENGTH;
 								pDlConfigHeader->nPDU = 0;
 
-								if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-									RETURN_ON_FAILURE(pInputFile, pOutputFile);
-								}
+                if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, lenToWrite, iIndex))
+                {
+                  RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                }
 							}
 
 							if (pduCount > 0)
@@ -459,14 +424,14 @@ int main(int argc, char **argv) {
 
 									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
 									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+										printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 										RETURN_ON_FAILURE(pInputFile, pOutputFile);
 									}
 
 									lenToWrite = pDlConfigPdu->nPDUSize;
 									if (fwrite((char *)pDlConfigPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
 									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+										printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 										RETURN_ON_FAILURE(pInputFile, pOutputFile);
 									}
 
@@ -495,7 +460,7 @@ int main(int argc, char **argv) {
 
 								if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
 								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+									printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 									RETURN_ON_FAILURE(pInputFile, pOutputFile);
 								}
 							}
@@ -520,14 +485,14 @@ int main(int argc, char **argv) {
 
 									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
 									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+										printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 										RETURN_ON_FAILURE(pInputFile, pOutputFile);
 									}
 
 									lenToWrite = pUlConfigPdu->nPDUSize;
 									if (fwrite((char *)pUlConfigPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
 									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+										printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 										RETURN_ON_FAILURE(pInputFile, pOutputFile);
 									}
 
@@ -541,13 +506,11 @@ int main(int argc, char **argv) {
 
 							if (pduCount < 2)
 							{
-								// write packet
-								len = fwrite((char *)pPktHeader, sizeof(char), PKT_HEADER_LENGTH + iPktLength, pOutputFile);
-								if (len != (PKT_HEADER_LENGTH + iPktLength))
-								{
-									printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-									RETURN_ON_FAILURE(pInputFile, pOutputFile);
-								}
+                // write packet
+                if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, (sizeof(s_pkt_header) + iPktLength), iIndex))
+                {
+                  RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                }
 							}
 							else
 							{
@@ -555,43 +518,37 @@ int main(int argc, char **argv) {
 								{
 									pUlDciPdu = pUlDciHeader->sULDCIPDU + i;
 
-									// write packet header
-									lenToWrite = TOTAL_HEADER_LENGTH + MSG_UL_DCI_REQ_HEADER_LENGTH;
+                  // update the length field
+                  updLengthField(pPktHeader, pIpHeader, pUdpHeader, pUlDciHeader, linkHdrLen, luaMsgType);
 
-									// update the length field
-									pPktHeader->iLength = LINK_IP_UDP_LUA_LENGTH + MSG_UL_DCI_TOTAL_LENGTH;
-									pPktHeader->iPLength = pPktHeader->iLength;
-									pIpHeader->ip_len = htons(pPktHeader->iLength - LINK_HEADER_LENGTH);
-									pUdpHeader->Length = htons(ntohs(pIpHeader->ip_len) - IP_HEADER_LENGTH);
-									pUlDciHeader->sMsgHdr.nMessageLen = MSG_UL_DCI_TOTAL_LENGTH;
-									pUlDciHeader->nDCI = 1;
+                  // write packet header
+                  lenToWrite = TOTAL_HEADER_LENGTH + MSG_UL_DCI_REQ_HEADER_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 
-									if (fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
-
-									lenToWrite = MSG_UL_DCI_REQ_PAYLOAD_LENGTH;
-									if (fwrite((char *)pUlDciPdu, sizeof(char), lenToWrite, pOutputFile) != lenToWrite)
-									{
-										printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-										RETURN_ON_FAILURE(pInputFile, pOutputFile);
-									}
+                  // write payload
+                  lenToWrite = MSG_UL_DCI_REQ_PAYLOAD_LENGTH;
+                  if (FALSE == writeFile(pOutputFile, (char *)pUlDciPdu, lenToWrite, iIndex))
+                  {
+                    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                  }
 								}
 							}
 							break;
 						default:
-							// write packet
-							len = fwrite((char *)pPktHeader, sizeof(char), sizeof(s_pkt_header) + iPktLength, pOutputFile);
-							if (len != (sizeof(s_pkt_header) + iPktLength))
-							{
-								printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
-								RETURN_ON_FAILURE(pInputFile, pOutputFile);
-							}
+						  //if (LUA_MSG_TYPE_PDCP_TO_RLC != luaMsgType)
+						  //{
+                // write packet
+                if (FALSE == writeFile(pOutputFile, (char *)pPktHeader, (sizeof(s_pkt_header) + iPktLength), iIndex))
+                {
+                  RETURN_ON_FAILURE(pInputFile, pOutputFile);
+                }
+						  //}
 					}
-				}
-			}
+				} // desPort=8888
+			} // UDP
 			else
 			{
 				// write packet
@@ -599,11 +556,11 @@ int main(int argc, char **argv) {
 				len = fwrite((char *)pPktHeader, sizeof(char), lenToWrite, pOutputFile);
 				if (len != lenToWrite)
 				{
-					printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+					printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 					RETURN_ON_FAILURE(pInputFile, pOutputFile);
 				}
 			}
-		}
+		} // IP
 
 		iIndex += PKT_HEADER_LENGTH + iPktLength;
 		pBuf = buffer;
@@ -616,7 +573,7 @@ int main(int argc, char **argv) {
 	return EXIT_SUCCESS;
 }
 
-u_char writeFile(FILE* pFile, char *pBuffer, u_int size, int iIndex)
+u_char writeFile(FILE* pFile, char *pBuffer, u_int size, long long iIndex)
 {
 	int len;
 
@@ -624,9 +581,59 @@ u_char writeFile(FILE* pFile, char *pBuffer, u_int size, int iIndex)
 
 	if (len != size)
 	{
-		printf("Failed to write package, iIndex=%d, len=%d\n", iIndex, len);
+		printf("Failed to write package, iIndex=%I64d, len=%d\n", iIndex, len);
 		return FALSE;
 	}
 
 	return TRUE;
+}
+
+// update the length field
+void updLengthField(s_pkt_header *pPktHeader,
+                    s_ip_header * pIpHeader,
+                    s_udp_header * pUdpHeader,
+                    void *pMsgHeader,
+                    u_int linkHdrLen,
+                    u_char msgType)
+{
+  u_int msgLen;
+
+  switch (msgType)
+  {
+    case LUA_MSG_TYPE_PHY_UCI_IND:
+      msgLen = MSG_UCI_IND_TOTAL_LENGTH;
+      ((RXUCIIndicationStruct *)pMsgHeader)->sMsgHdr.nMessageLen = msgLen;
+      ((RXUCIIndicationStruct *)pMsgHeader)->nUCI = 1;
+      break;
+    case LUA_MSG_TYPE_PHY_CRC_IND:
+      msgLen = MSG_CRC_IND_TOTAL_LENGTH;
+      ((CRCIndicationStruct *)pMsgHeader)->sMsgHdr.nMessageLen = msgLen;
+      ((CRCIndicationStruct *)pMsgHeader)->nCrc = 1;
+      break;
+    case LUA_MSG_TYPE_PHY_ULSCH_IND:
+      msgLen = MSG_ULSCH_IND_TOTAL_LENGTH;
+      ((RXULSCHIndicationStruct *)pMsgHeader)->sMsgHdr.nMessageLen = msgLen;
+      ((RXULSCHIndicationStruct *)pMsgHeader)->nUlsch = 1;
+      break;
+    case LUA_MSG_TYPE_PHY_RACH_IND:
+      msgLen = MSG_RACH_IND_TOTAL_LENGTH;
+      ((RXRACHIndicationStruct *)pMsgHeader)->sMsgHdr.nMessageLen = msgLen;
+      ((RXRACHIndicationStruct *)pMsgHeader)->nNrOfPreamb = 1;
+      break;
+    case LUA_MSG_TYPE_PHY_UL_DCI_REQ:
+      msgLen = MSG_UL_DCI_TOTAL_LENGTH;
+      ((ULDCIRequestStruct *)pMsgHeader)->sMsgHdr.nMessageLen = msgLen;
+      ((ULDCIRequestStruct *)pMsgHeader)->nDCI = 1;
+      break;
+    default:
+      printf("Unknown msgType (%u)\n", msgType);
+      return;
+  }
+
+  pPktHeader->iLength = linkHdrLen + IP_HEADER_LENGTH + UDP_HEADER_LENGTH + LUA_HEADER_LENGTH + msgLen;
+  pPktHeader->iPLength = pPktHeader->iLength;
+  pIpHeader->ip_len = htons(pPktHeader->iLength - linkHdrLen);
+  pUdpHeader->Length = htons(ntohs(pIpHeader->ip_len) - IP_HEADER_LENGTH);
+
+  return;
 }
