@@ -8,6 +8,8 @@
 #ifndef LOG_CONVERT_H_
 #define LOG_CONVERT_H_
 
+
+#define BUFFER_SIZE 2048 // max size of packet
 #define ETHERTYPE_IP 0x0800   //IP Protocol
 
 #define FALSE 0

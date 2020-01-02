@@ -24,8 +24,9 @@ unsigned int MAGIC = 0xa1b2c3d4;
 
 int main(int argc, char **argv) {
 
-	unsigned char buffer[2048] = {0};
+	unsigned char buffer[BUFFER_SIZE] = {0};
 	unsigned char *pBuf = buffer;
+  u_int nPktDropped = 0;
 	//u_int rnti;
 	long long iIndex;
 	int len, iPktLength;
@@ -169,6 +170,8 @@ int main(int argc, char **argv) {
 
 	while (iIndex < iFileLen)
 	{
+	  //printf("iIndex = %I64d\n", iIndex);
+
 		// ¶ÁÈ¡°üÍ·
 		len = fread(pBuf, sizeof(char), sizeof(s_pkt_header), pInputFile);
 		if (len != sizeof(s_pkt_header))
@@ -182,6 +185,23 @@ int main(int argc, char **argv) {
 
 		pBuf = pBuf + sizeof(s_pkt_header);
 		iPktLength = pPktHeader->iPLength;
+
+		// skip the large packet
+		if (iPktLength > BUFFER_SIZE)
+		{
+		  //printf("iIndex = %I64d, iPktLength = %d dropped.\n", iIndex, iPktLength);
+
+		  if (fseek(pInputFile, iPktLength, SEEK_CUR) != 0)
+		  {
+		    printf("ERROR: fseek failed.\n");
+		    RETURN_ON_FAILURE(pInputFile, pOutputFile);
+		  }
+
+	    iIndex += PKT_HEADER_LENGTH + iPktLength;
+	    pBuf = buffer;
+	    nPktDropped++;
+	    continue;
+		}
 
 		// read packet payload
 		len = fread(pBuf, sizeof(char), iPktLength, pInputFile);
@@ -569,6 +589,12 @@ int main(int argc, char **argv) {
 
 	fclose(pInputFile);
 	fclose(pOutputFile);
+
+//	if (nPktDropped > 0)
+//	{
+//	  printf("%u packets have been dropped due to size greater than %u.\n", nPktDropped, BUFFER_SIZE);
+//	}
+
 	printf("PCAP file converted successfully.\n");
 	return EXIT_SUCCESS;
 }
